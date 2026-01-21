@@ -122,11 +122,13 @@ type Client struct {
 	MsgChan chan *msgAddr
 }
 
-func NewClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface) (*Client, error) {
-	return newClient(v4, v6, logger, inter)
-} // NewClient creates a new mdns Client that can be used to query
-// for records
-func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface) (*Client, error) {
+func NewClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
+	return newClient(v4, v6, logger, inter, srcIP) // Add nil as default srcIP if not specified
+}
+
+// newClient creates a new mdns Client that can be used to query
+// for records. Added srcIP parameter to bind to a specific address.
+func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
 	if !v4 && !v6 {
 		return nil, fmt.Errorf("Must enable at least one of IPv4 and IPv6 querying")
 	}
@@ -141,7 +143,11 @@ func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface) (*Cli
 
 	// Establish unicast connections
 	if v4 {
-		uconn4, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353})
+		localAddr := &net.UDPAddr{Port: 0}
+		if srcIP != nil && srcIP.To4() != nil {
+			localAddr.IP = srcIP
+		}
+		uconn4, err = net.ListenUDP("udp4", localAddr)
 		if err != nil {
 			logger.Printf("[ERR] mdns: Failed to bind to udp4 port: %v", err)
 		}
@@ -158,7 +164,7 @@ func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface) (*Cli
 
 	// Establish multicast connections
 	if v4 {
-		mconn4, err = net.ListenMulticastUDP("udp4", nil, ipv4Addr)
+		mconn4, err = net.ListenMulticastUDP("udp4", inter, ipv4Addr)
 		if err != nil {
 			logger.Printf("[ERR] mdns: Failed to bind to udp4 port: %v", err)
 		}
@@ -400,9 +406,7 @@ func (c *Client) recv(l *net.UDPConn, msgCh chan *msgAddr) {
 	buf := make([]byte, 65536)
 	for atomic.LoadInt32(&c.closed) == 0 {
 		n, addr, err := l.ReadFromUDP(buf)
-
-		//fmt.Println("msg", n, addr, err)
-
+		
 		if atomic.LoadInt32(&c.closed) == 1 {
 			return
 		}
