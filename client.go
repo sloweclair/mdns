@@ -6,7 +6,7 @@ package mdns
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -51,7 +51,7 @@ type QueryParam struct {
 	WantUnicastResponse bool                 // Unicast response desired, as per 5.4 in RFC
 	DisableIPv4         bool                 // Whether to disable usage of IPv4 for MDNS operations. Does not affect discovered addresses.
 	DisableIPv6         bool                 // Whether to disable usage of IPv6 for MDNS operations. Does not affect discovered addresses.
-	Logger              *log.Logger          // Optionally provide a *log.Logger to better manage log output.
+	Logger              *slog.Logger         // Optionally provide a *log.Logger to better manage log output.
 }
 
 // DefaultParams is used to return a default set of QueryParam's
@@ -117,18 +117,18 @@ type Client struct {
 	closed   int32
 	closedCh chan struct{} // TODO(reddaly): This doesn't appear to be used.
 
-	log *log.Logger
+	log *slog.Logger
 
 	MsgChan chan *msgAddr
 }
 
-func NewClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
+func NewClient(v4 bool, v6 bool, logger *slog.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
 	return newClient(v4, v6, logger, inter, srcIP) // Add nil as default srcIP if not specified
 }
 
 // newClient creates a new mdns Client that can be used to query
 // for records. Added srcIP parameter to bind to a specific address.
-func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
+func newClient(v4 bool, v6 bool, logger *slog.Logger, inter *net.Interface, srcIP net.IP) (*Client, error) {
 	if !v4 && !v6 {
 		return nil, fmt.Errorf("Must enable at least one of IPv4 and IPv6 querying")
 	}
@@ -149,13 +149,13 @@ func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP
 		}
 		uconn4, err = net.ListenUDP("udp4", localAddr)
 		if err != nil {
-			logger.Printf("[ERR] mdns: Failed to bind to udp4 port: %v", err)
+			logger.Error("mdns: Failed to bind to udp4 port", "error", err)
 		}
 	}
 	if v6 {
 		uconn6, err = net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
 		if err != nil {
-			logger.Printf("[ERR] mdns: Failed to bind to udp6 port: %v", err)
+			logger.Warn("mdns: Failed to bind to udp6 port", "error", err)
 		}
 	}
 	if uconn4 == nil && uconn6 == nil {
@@ -166,13 +166,13 @@ func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP
 	if v4 {
 		mconn4, err = net.ListenMulticastUDP("udp4", inter, ipv4Addr)
 		if err != nil {
-			logger.Printf("[ERR] mdns: Failed to bind to udp4 port: %v", err)
+			logger.Error("mdns: Failed to bind to udp4 multicast port", "error", err)
 		}
 	}
 	if v6 {
 		mconn6, err = net.ListenMulticastUDP("udp6", nil, ipv6Addr)
 		if err != nil {
-			logger.Printf("[ERR] mdns: Failed to bind to udp6 port: %v", err)
+			logger.Warn("mdns: Failed to bind to udp6 multicast port", "error", err)
 		}
 	}
 	if mconn4 == nil && mconn6 == nil {
@@ -182,7 +182,7 @@ func newClient(v4 bool, v6 bool, logger *log.Logger, inter *net.Interface, srcIP
 	// Check that unicast and multicast connections have been made for IPv4 and IPv6
 	// and disable the respective protocol if not.
 	if uconn4 == nil || mconn4 == nil {
-		logger.Printf("[INFO] mdns: Failed to listen to both unicast and multicast on IPv4")
+		logger.Info("mdns: Failed to listen to both unicast and multicast on IPv4")
 		uconn4 = nil
 		mconn4 = nil
 		v4 = false
@@ -218,7 +218,7 @@ func (c *Client) Close() error {
 		return nil
 	}
 
-	c.log.Printf("[INFO] mdns: Closing Client %v", *c)
+	c.log.Info("mdns: Closing Client")
 	close(c.closedCh)
 
 	if c.ipv4UnicastConn != nil {
@@ -368,7 +368,7 @@ func (c *Client) query(params *[]QueryParam, respChan chan<- *ServiceEntry) erro
 				m.SetQuestion(inp.Name, dns.TypePTR)
 				m.RecursionDesired = false
 				if err := c.sendQuery(m); err != nil {
-					c.log.Printf("[ERR] mdns: Failed to query instance %s: %v", inp.Name, err)
+					c.log.Warn("mdns: Failed to query instance", "instance", inp.Name, "error", err)
 				}
 			}
 		case <-finish:
@@ -406,18 +406,18 @@ func (c *Client) recv(l *net.UDPConn, msgCh chan *msgAddr) {
 	buf := make([]byte, 65536)
 	for atomic.LoadInt32(&c.closed) == 0 {
 		n, addr, err := l.ReadFromUDP(buf)
-		
+
 		if atomic.LoadInt32(&c.closed) == 1 {
 			return
 		}
 
 		if err != nil {
-			c.log.Printf("[ERR] mdns: Failed to read packet: %v", err)
+			c.log.Warn("mdns: Failed to read packet", "error", err)
 			continue
 		}
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
-			c.log.Printf("[ERR] mdns: Failed to unpack packet: %v", err)
+			c.log.Warn("mdns: Failed to unpack packet", "error", err)
 			continue
 		}
 		select {

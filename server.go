@@ -5,8 +5,9 @@ package mdns
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -46,7 +47,7 @@ type Config struct {
 	LogEmptyResponses bool
 
 	// Logger can optionally be set to use an alternative logger instead of the default.
-	Logger *log.Logger
+	Logger *slog.Logger
 }
 
 // mDNS server is used to listen for mDNS queries and respond if we
@@ -73,7 +74,7 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	if config.Logger == nil {
-		config.Logger = log.Default()
+		config.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
 	s := &Server{
@@ -125,7 +126,7 @@ func (s *Server) recv(c *net.UDPConn) {
 			continue
 		}
 		if err := s.parsePacket(buf[:n], from); err != nil {
-			s.config.Logger.Printf("[ERR] mdns: Failed to handle query: %v", err)
+			s.config.Logger.Warn("mdns: Failed to handle query", "error", err)
 		}
 	}
 }
@@ -134,7 +135,7 @@ func (s *Server) recv(c *net.UDPConn) {
 func (s *Server) parsePacket(packet []byte, from net.Addr) error {
 	var msg dns.Msg
 	if err := msg.Unpack(packet); err != nil {
-		s.config.Logger.Printf("[ERR] mdns: Failed to unpack packet: %v", err)
+		s.config.Logger.Warn("mdns: Failed to unpack packet", "error", err)
 		return err
 	}
 	return s.handleQuery(&msg, from)
@@ -233,7 +234,7 @@ func (s *Server) handleQuery(query *dns.Msg, from net.Addr) error {
 		for i, q := range query.Question {
 			questions[i] = q.Name
 		}
-		s.config.Logger.Printf("no responses for query with questions: %s", strings.Join(questions, ", "))
+		s.config.Logger.Info("mdns: no responses for query", "questions", strings.Join(questions, ", "))
 	}
 
 	if mresp := resp(false); mresp != nil {
