@@ -1,4 +1,4 @@
-module github.com/sloweclair/mdns
+module github.com/medgooroo/mdns
 
 go 1.23.0
 

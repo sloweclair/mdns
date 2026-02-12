@@ -170,7 +170,7 @@ func newClient(v4 bool, v6 bool, logger *slog.Logger, inter *net.Interface, srcI
 		}
 	}
 	if v6 {
-		mconn6, err = net.ListenMulticastUDP("udp6", nil, ipv6Addr)
+		mconn6, err = net.ListenMulticastUDP("udp6", inter, ipv6Addr)
 		if err != nil {
 			logger.Warn("mdns: Failed to bind to udp6 multicast port", "error", err)
 		}
